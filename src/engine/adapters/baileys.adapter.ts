@@ -139,6 +139,13 @@ export class BaileysAdapter implements IWhatsAppEngine {
   private connectedAt = 0;
   private reconnectAttempts = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  /** Guard so the contact-name app-state resync (hydrateNames) runs at most ONCE per process, on the
+   *  first 'open', instead of on every reconnect. resyncAppState() makes the companion pull app-state
+   *  patches from the primary phone — which the phone surfaces as a "linked device synced" push. With
+   *  ~half-hourly reconnects that produced a constant stream of sync notifications on the operator's
+   *  handset for a purely cosmetic (display-name) backfill. One resync per process is plenty: names are
+   *  persisted in the store and re-hydrated on the next container start. */
+  private namesHydrated = false;
   /** Lazily loaded @whiskeysockets/baileys module (ESM-only; loaded on first connect, not at boot). */
   private lib?: typeof BaileysLib;
 
@@ -243,6 +250,12 @@ export class BaileysAdapter implements IWhatsAppEngine {
       version,
       browser: BAILEYS_BROWSER,
       printQRInTerminal: false,
+      // Connect passively as a headless companion: do NOT broadcast "available" presence on connect.
+      // Baileys defaults markOnlineOnConnect to true, which makes this linked device assert an active
+      // foreground presence that competes with the primary phone — a known driver of WhatsApp-side
+      // companion churn (periodic drop → reconnect) and of "device is active" surfacing on the handset.
+      // A send/receive gateway never needs to appear online, so keep it quiet.
+      markOnlineOnConnect: false,
       // Enable the initial sync. Baileys defaults `shouldSyncHistoryMessage` to `() => !!syncFullHistory`,
       // so leaving both unset disables ALL history + app-state sync - no contacts, chats, recent history,
       // or lid->phone mappings ever arrive (the address-book app-state sync only runs once history sync is
@@ -344,8 +357,14 @@ export class BaileysAdapter implements IWhatsAppEngine {
       this.connectedAt = Math.floor(Date.now() / 1000) - 10;
       this.setStatus(EngineStatus.READY);
       this.callbacks.onReady?.(this.phoneNumber ?? '', this.pushName ?? '');
-      // Backfill names the initial sync skipped (see hydrateNames).
-      void this.hydrateNames();
+      // Backfill names the initial sync skipped (see hydrateNames) — but only ONCE per process, not on
+      // every reconnect. The resyncAppState() inside hydrateNames is what the primary phone reports as a
+      // "linked device synced" notification; re-running it on each of the ~half-hourly reconnects spammed
+      // the operator's handset for a cosmetic backfill. First 'open' hydrates; later reconnects skip it.
+      if (!this.namesHydrated) {
+        this.namesHydrated = true;
+        void this.hydrateNames();
+      }
     }
 
     if (connection === 'close') {

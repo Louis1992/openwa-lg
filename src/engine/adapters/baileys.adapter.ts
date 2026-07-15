@@ -1541,23 +1541,20 @@ export class BaileysAdapter implements IWhatsAppEngine {
    * through here, so they are excluded by construction (reactions are NOT excluded by Baileys' guard).
    */
   /**
-   * Resolve a 1:1 phone-dialect chat id (`@c.us` / `@s.whatsapp.net`) to the contact's `@lid` when the
-   * mapping is known. WhatsApp rejects PN-addressed 1:1 sends to LID-migrated accounts with ack error
-   * 463 ("missing tctoken" — the privacy token is stored and honored under the LID), while the very
-   * same send addressed to the LID delivers (verified live). Groups, broadcast, already-lid and
-   * unmapped ids pass through unchanged, reproducing the previous behavior.
+   * LG-REVERT of upstream #717 (LID-first 1:1 sends), 15.07.2026.
+   *
+   * Upstream resolves 1:1 phone-dialect ids to the contact's `@lid` to dodge ack 463 on
+   * LID-migrated accounts. In production on THIS gateway (session paired 11.07., pre-LID) the
+   * LID-addressed sends were consistently undeliverable instead: recipients stayed on
+   * "Warte auf diese Nachricht…" forever (broken sender session on the LID path, one grey tick),
+   * and the owner's own device showed the send echoes as contact-less "Unbekannte*r Benutzer*in"
+   * chats. PN-addressed sends worked flawlessly here until 12.07. (last pre-#717 image), so we
+   * pin 1:1 sends back to the phone-number JID. If an individual recipient ever bounces with
+   * ack 463 ("missing tctoken"), revisit per-contact LID sending — do NOT re-enable it globally
+   * while the Baileys v7 LID encryption path is this fragile.
    */
-  private async toDeliverableJid(chatId: string): Promise<string> {
-    if (!chatId.endsWith('@c.us') && !chatId.endsWith('@s.whatsapp.net')) {
-      return chatId;
-    }
-    try {
-      const pn = this.sessionStore.toEngineJid(chatId);
-      const lid = await this.sock?.signalRepository?.lidMapping?.getLIDForPN(pn);
-      return lid ?? chatId;
-    } catch {
-      return chatId; // resolution is best-effort; an unmapped contact sends to the PN as before
-    }
+  private toDeliverableJid(chatId: string): Promise<string> {
+    return Promise.resolve(chatId);
   }
 
   private withEphemeral(

@@ -566,6 +566,58 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
    * Persist pre-connection history into the `messages` table for the chat view, without webhook/hook/ws
    * dispatch (it predates the live session). De-duplicated by `waMessageId` so re-syncs never duplicate.
    */
+  /**
+   * LeadGenies fork (12.09.2026): store a send that was composed on the linked phone (Baileys delivers
+   * it as a live fromMe upsert → onMessageCreate with `apiOriginated: false`). Insert-only with the
+   * UNIQUE(sessionId, waMessageId) index as dedup — an existing row (API send, re-fire, history) is
+   * skipped silently. Never throws: the webhook/WS dispatch in onMessageCreate must not depend on the DB.
+   */
+  private async persistPhoneComposedSend(id: string, message: IncomingMessage): Promise<void> {
+    try {
+      if (
+        !resolveFeatureFlags(this.configService).storeEphemeralMessages &&
+        message.ephemeralDuration &&
+        message.ephemeralDuration > 0
+      ) {
+        return;
+      }
+      const metadata: Record<string, unknown> = {};
+      if (message.media) {
+        metadata.media = message.media;
+      }
+      if (message.quotedMessage) {
+        metadata.quotedMessage = message.quotedMessage;
+      }
+      const dbMessage = this.messageRepository.create({
+        sessionId: id,
+        waMessageId: message.id,
+        chatId: message.chatId,
+        chatName: message.contact?.pushName ?? message.contact?.name ?? undefined,
+        from: message.from,
+        to: message.to,
+        body: message.body,
+        type: message.type,
+        direction: MessageDirection.OUTGOING,
+        timestamp: message.timestamp,
+        status: MessageStatus.SENT,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+      });
+      const result = await this.messageRepository.insert(dbMessage as unknown as QueryDeepPartialEntity<Message>);
+      Object.assign(dbMessage, result.identifiers[0] ?? {}, result.generatedMaps?.[0] ?? {});
+      void this.hookManager
+        .execute(
+          'message:persisted',
+          { sessionId: id, message: dbMessage },
+          { sessionId: id, source: 'SessionService' },
+        )
+        .catch(() => undefined);
+    } catch (err) {
+      if (!isUniqueConstraintError(err)) {
+        this.logger.error(`Failed to persist phone-composed send ${message.id}`, String(err));
+      }
+    }
+  }
+
   private async persistHistoryMessages(id: string, messages: IncomingMessage[]): Promise<void> {
     const storeEphemeralMessages = resolveFeatureFlags(this.configService).storeEphemeralMessages;
     const byId = new Map<string, IncomingMessage>();
@@ -921,18 +973,22 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
             sessionId: id,
             source: 'Engine',
           })
-          .then(({ continue: shouldContinue, data: finalMessage }) => {
+          .then(async ({ continue: shouldContinue, data: finalMessage }) => {
             if (!shouldContinue) {
               return;
             }
 
-            // NOTE: unlike onMessage (incoming), this path intentionally does NOT mirror the message
-            // to the `messages` table. message_create ALSO fires for API-originated sends, which the
-            // REST send path already persists — saving here would double-persist them. Safe
-            // persistence of phone-composed sends needs a unique (sessionId, waMessageId) index +
-            // de-dup and is tracked as a separate enhancement; until then this path only webhooks/
-            // emits. So local message history reflects API sends + all inbound, but not sends
-            // composed on a linked phone.
+            // LeadGenies fork (12.09.2026): sends composed on the linked PHONE are persisted here, so the
+            // local history (`GET /messages`) reflects the whole conversation and not only API sends +
+            // inbound (upstream left this as a "separate enhancement"). The Baileys adapter marks such
+            // messages `apiOriginated: false`; API-send echoes carry `true` and are already persisted by
+            // the REST send path, so they are skipped — no double row, no race with persistSentState().
+            // UNIQUE(sessionId, waMessageId) stays the dedup oracle, exactly like the onMessage insert.
+            const outgoing: IncomingMessage = finalMessage;
+            if (outgoing.apiOriginated === false && this.isLiveEngine(id, engine)) {
+              await this.persistPhoneComposedSend(id, outgoing);
+            }
+
             void this.webhookService.dispatch(id, 'message.sent', finalMessage);
             // Emit real-time event to WebSocket clients (as message.sent, not message.received)
             this.eventsGateway.emitMessageSent(id, finalMessage);

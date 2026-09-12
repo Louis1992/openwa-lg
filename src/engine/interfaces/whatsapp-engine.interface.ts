@@ -78,6 +78,14 @@ export interface IncomingMessage {
    * code can skip these without matching an engine-specific pseudo-JID (e.g. `status@broadcast`).
    */
   isStatusBroadcast?: boolean;
+  /**
+   * LeadGenies fork (12.09.2026) — set by the Baileys adapter on `message_create` deliveries:
+   * `true` for the echo of a send this gateway issued via the REST API (the send path already
+   * persists that row), `false` for a send composed on the linked phone (delivered live as a fromMe
+   * upsert). SessionService persists ONLY the `false` case, so phone-composed sends appear in the
+   * local history without double-writing API sends. `undefined` (other engines) = unchanged behaviour.
+   */
+  apiOriginated?: boolean;
   /** WhatsApp ephemeral/disappearing-messages timer in seconds. Set per-chat on each message
    *  in the raw payload. 0 or undefined = no disappearing timer.
    *  Known values: 86400 (24h), 604800 (7d), 7776000 (90d). */

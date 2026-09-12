@@ -1140,6 +1140,10 @@ export class BaileysAdapter implements IWhatsAppEngine {
       // --- Normal message: enrich + emit ---
       const incoming = await this.mapMessage(msg, contentType, { skipMediaDownload: opts?.skipMedia });
       if (msg.key.fromMe === true) {
+        // LeadGenies fork (12.09.2026): a fromMe message that reaches the live upsert path was composed on
+        // another device of this account (the linked phone) — API sends never come through here (their
+        // 'append' echo is excluded in handleMessagesUpsert). Mark it so SessionService persists it.
+        incoming.apiOriginated = false;
         this.callbacks.onMessageCreate?.(incoming);
       } else {
         this.callbacks.onMessage?.(incoming);
@@ -1609,6 +1613,9 @@ export class BaileysAdapter implements IWhatsAppEngine {
       // protocol / reaction / empty own messages carry no neutral "sent" content.
       if (!contentType || contentType === 'protocolMessage' || contentType === 'reactionMessage') return;
       const neutral = await this.mapMessage(sent, contentType, { skipMediaDownload: true });
+      // LeadGenies fork (12.09.2026): the REST send path already persisted this message — flag the echo
+      // so SessionService.onMessageCreate does not insert a second row (see apiOriginated).
+      neutral.apiOriginated = true;
       this.callbacks.onMessageCreate(neutral);
     } catch (err) {
       this.logger.warn('Failed to emit own-send echo', {

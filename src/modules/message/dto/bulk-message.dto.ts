@@ -43,10 +43,10 @@ class BulkMediaDto {
 }
 
 class BulkMessageContentDto {
-  @ApiPropertyOptional({ description: 'Text content for text messages', maxLength: 4096 })
+  @ApiPropertyOptional({ description: 'Text content for text messages', maxLength: 20000 })
   @IsOptional()
   @IsString()
-  @MaxLength(4096)
+  @MaxLength(20000)
   text?: string;
 
   // Typed nested DTOs (not bare object literals) so the global ValidationPipe's whitelist /

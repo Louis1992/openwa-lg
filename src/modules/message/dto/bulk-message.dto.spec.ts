@@ -32,9 +32,9 @@ const textItem = (text: string, extra: Record<string, unknown> = {}) => ({
 });
 
 describe('SendBulkMessageDto content length + variables validation', () => {
-  it('accepts text at the 4096 cap and rejects beyond it (parity with single-send)', async () => {
-    expect(await validateBulk(textItem('a'.repeat(4096)))).toHaveLength(0);
-    expect((await validateBulk(textItem('a'.repeat(4097)))).length).toBeGreaterThan(0);
+  it('accepts text at the 20000 cap and rejects beyond it (parity with single-send)', async () => {
+    expect(await validateBulk(textItem('a'.repeat(20000)))).toHaveLength(0);
+    expect((await validateBulk(textItem('a'.repeat(20001)))).length).toBeGreaterThan(0);
   });
 
   it('accepts an object variables map and rejects a non-object', async () => {

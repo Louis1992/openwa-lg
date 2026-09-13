@@ -26,11 +26,11 @@ export class SendTextMessageDto {
   @ApiProperty({
     description: 'Text message content',
     example: 'Hello from OpenWA!',
-    maxLength: 4096,
+    maxLength: 20000,
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(4096)
+  @MaxLength(20000) // 13.09.2026 LeadGenies: Start-Prompts der Chat-Konstellation sind 5–9k Zeichen; WhatsApp erlaubt 65.536
   text: string;
 
   @ApiPropertyOptional({ description: MENTIONS_DESCRIPTION, example: ['628123456789@c.us'], type: [String] })
